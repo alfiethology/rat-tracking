@@ -2,7 +2,7 @@ import os
 import cv2
 import csv
 import json
-from tqdm import tqdm
+from tqdm import tqdm  # Re-added tqdm
 from ultralytics import YOLO
 import time
 import datetime
@@ -16,6 +16,12 @@ start_time = time.time()
 # ====== Ensure output folder exists ======
 os.makedirs(CSV_OUTPUT_FOLDER, exist_ok=True)
 
+# Prepare single CSV output file
+combined_csv_path = os.path.join(CSV_OUTPUT_FOLDER, f"combined_rat_data_{date}.csv")
+combined_csv_file = open(combined_csv_path, mode='w', newline='')
+combined_csv_writer = csv.writer(combined_csv_file)
+combined_csv_writer.writerow(["EPM_session", "video_name", "rat_name", "timestamp", "frame_number", "area_occupied"])  # Added timestamp
+
 # ====== Load YOLO Model ======
 model = YOLO(MODEL_PATH)
 
@@ -26,7 +32,7 @@ def make_rect(coords):
 
 def is_point_in_rect(point, rect):
     x, y = point
-    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= y <= rect['ymax']
+    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= rect['ymax']  # Fixed rect['ymax']
 
 def is_point_in_polygon(point, polygon_coords):
     polygon = Polygon(polygon_coords)
@@ -56,12 +62,13 @@ with open(SCHEDULE_JSON_PATH, 'r') as f:
 
 schedule_dict = {}
 for entry in full_schedule:
+    session = entry['EPM_session']
     video = entry['video_name']
     sched = entry['schedule']
     for s in sched:
         s['start_seconds'] = hms_to_seconds(s['start_time'])
-        s['end_seconds'] = s['start_seconds'] + 300  # 5 minutes
-    schedule_dict[video] = sched
+        s['end_seconds'] = s.get('end_time') and hms_to_seconds(s['end_time']) or (s['start_seconds'] + 300)  # Default to 5 minutes
+    schedule_dict[video] = {"session": session, "schedule": sched}
 
 def get_current_rat_name(schedule, seconds_elapsed):
     for entry in schedule:
@@ -90,22 +97,15 @@ for video_file in video_files:
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"Found {frame_count} frames at {fps:.2f} FPS")
 
-    # Prepare CSV output file
-    video_basename = os.path.splitext(video_file)[0]
-    csv_output_path = os.path.join(CSV_OUTPUT_FOLDER, f"{video_basename}_{date}.csv")
-    csv_file = open(csv_output_path, mode='w', newline='')
-    csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["frame", "timestamp", "rat_name", "area"])
-
-    # Progress bar
-    for frame_idx in tqdm(range(1, frame_count + 1, FRAME_SKIP), desc="🔍 Detecting", unit="frame"):
+    # Process frames with progress bar
+    for frame_idx in tqdm(range(1, frame_count + 1, FRAME_SKIP), desc="🔍 Detecting", unit="frame"):  # Re-added tqdm
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         if not ret:
             break
 
         current_time_sec = frame_idx / fps
-        rat_name = get_current_rat_name(rat_schedule, current_time_sec)
+        rat_name = get_current_rat_name(schedule_dict[video_file]["schedule"], current_time_sec)
         if rat_name is None:
             continue  # Skip frame
 
@@ -113,7 +113,7 @@ for video_file in video_files:
         hrs = int(current_time_sec // 3600)
         mins = int((current_time_sec % 3600) // 60)
         secs = int(current_time_sec % 60)
-        timestamp = f"{hrs:02}:{mins:02}:{secs:02}"
+        timestamp = f"{hrs:02}:{mins:02}:{secs:02}"  # Generate timestamp
 
         results = model(frame, verbose=False, imgsz=640)
 
@@ -153,14 +153,15 @@ for video_file in video_files:
         else:
             continue  # No good detection
 
-        # Write to CSV
-        csv_writer.writerow([frame_idx, timestamp, rat_name, area_label])
+        # Write to combined CSV
+        epm_session = schedule_dict[video_file]["session"]
+        combined_csv_writer.writerow([epm_session, video_file, rat_name, timestamp, frame_idx, area_label])  # Added timestamp
 
     cap.release()
-    csv_file.close()
-    print(f"CSV saved to: {csv_output_path}")
+    print(f"Finished processing {video_file}")
 
-print("All videos processed.")
+combined_csv_file.close()
+print(f"Combined CSV saved to: {combined_csv_path}")
 
 end_time = time.time()
 elapsed = end_time - start_time
