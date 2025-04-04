@@ -32,7 +32,7 @@ def make_rect(coords):
 
 def is_point_in_rect(point, rect):
     x, y = point
-    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= rect['ymax']  # Fixed rect['ymax']
+    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= y <= rect['ymax']  # Ensure correct logic for rectangles
 
 def is_point_in_polygon(point, polygon_coords):
     polygon = Polygon(polygon_coords)
@@ -149,13 +149,13 @@ for video_file in video_files:
                             area_label = name
                             break
                 if area_label != "none":
-                    break
+                    break  # Ensure the detected area is assigned correctly
         else:
             continue  # No good detection
 
         # Write to combined CSV
         epm_session = schedule_dict[video_file]["session"]
-        combined_csv_writer.writerow([epm_session, video_file, rat_name, timestamp, frame_idx, area_label])  # Added timestamp
+        combined_csv_writer.writerow([epm_session, video_file, rat_name, timestamp, frame_idx, area_label])  # Ensure all areas, including 'middle', are written
 
     cap.release()
     print(f"Finished processing {video_file}")
