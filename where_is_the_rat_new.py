@@ -14,7 +14,7 @@ AREAS_JSON_PATH = "/home/or22503/Louise_rat_tracking/areas.json"
 SCHEDULE_JSON_PATH = "/home/or22503/Louise_rat_tracking/multi_video_time_stamps.json"
 CSV_OUTPUT_FOLDER = "/home/or22503/Louise_rat_tracking/csv_outputs"
 MIN_CONFIDENCE = 0.8
-FRAME_SKIP = 25  # Set this to 1 for every frame, 5 for every 5th frame, etc.
+FRAME_SKIP = 5  # Set this to 1 for every frame, 5 for every 5th frame, etc.
 
 # ====== Start Timer & date ======
 date = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -34,7 +34,10 @@ def make_rect(coords):
 with open(AREAS_JSON_PATH, 'r') as f:
     area_boxes = json.load(f)
 
-area_rects = {name: coords for name, coords in area_boxes.items()}
+area_rects = {
+    name: [make_rect(rect) for rect in rect_list]
+    for name, rect_list in area_boxes.items()
+}
 
 def is_point_in_rect(point, rect):
     x, y = point
@@ -109,7 +112,7 @@ for video_file in video_files:
         secs = int(current_time_sec % 60)
         timestamp = f"{hrs:02}:{mins:02}:{secs:02}"
 
-        results = model(frame, verbose=False, imgsz=416)
+        results = model(frame, verbose=False, imgsz=640)
 
         area_label = "none"
         best_box = None
@@ -133,8 +136,7 @@ for video_file in video_files:
             center_y = int((y1 + y2) / 2)
 
             for name, rect_list in area_rects.items():
-                for rect in rect_list:
-                    rect_obj = make_rect(rect)
+                for rect_obj in rect_list:  # rects are already precomputed
                     if is_point_in_rect((center_x, center_y), rect_obj):
                         area_label = name
                         break
