@@ -7,6 +7,7 @@ from ultralytics import YOLO
 import time
 import datetime
 from rat_monitor_settings import *
+from shapely.geometry import Point, Polygon  # Add this for polygon handling
 
 # ====== Start Timer & date ======
 date = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -23,17 +24,27 @@ def make_rect(coords):
     (x1, y1), (x2, y2) = coords
     return {"xmin": min(x1, x2), "xmax": max(x1, x2), "ymin": min(y1, y2), "ymax": max(y1, y2)}
 
-with open(AREAS_JSON_PATH, 'r') as f:
-    area_boxes = json.load(f)
-
-area_rects = {
-    name: [make_rect(rect) for rect in rect_list]
-    for name, rect_list in area_boxes.items()
-}
-
 def is_point_in_rect(point, rect):
     x, y = point
     return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= y <= rect['ymax']
+
+def is_point_in_polygon(point, polygon_coords):
+    polygon = Polygon(polygon_coords)
+    return polygon.contains(Point(point))
+
+with open(AREAS_JSON_PATH, 'r') as f:  # Update to use areas_new.json
+    area_boxes = json.load(f)
+
+area_shapes = {}
+for name, shape_list in area_boxes.items():
+    area_shapes[name] = []
+    for shape_coords in shape_list:
+        if len(shape_coords) == 2:  # Rectangle (two points)
+            area_shapes[name].append({"type": "rectangle", "shape": make_rect(shape_coords)})
+        elif len(shape_coords) > 2:  # Polygon (multiple points)
+            area_shapes[name].append({"type": "polygon", "shape": Polygon(shape_coords)})
+        else:
+            raise ValueError(f"Invalid shape definition for area '{name}'")
 
 # ====== Load Rat Schedules ======
 def hms_to_seconds(hms_str):
@@ -49,7 +60,7 @@ for entry in full_schedule:
     sched = entry['schedule']
     for s in sched:
         s['start_seconds'] = hms_to_seconds(s['start_time'])
-        s['end_seconds'] = s['start_seconds'] + 300  # default to 5 minutes
+        s['end_seconds'] = s['start_seconds'] + 300  # 5 minutes
     schedule_dict[video] = sched
 
 def get_current_rat_name(schedule, seconds_elapsed):
@@ -127,11 +138,16 @@ for video_file in video_files:
             center_x = int((x1 + x2) / 2)
             center_y = int((y1 + y2) / 2)
 
-            for name, rect_list in area_rects.items():
-                for rect_obj in rect_list:  # rects are already precomputed
-                    if is_point_in_rect((center_x, center_y), rect_obj):
-                        area_label = name
-                        break
+            for name, shapes in area_shapes.items():
+                for shape_data in shapes:
+                    if shape_data["type"] == "rectangle":
+                        if is_point_in_rect((center_x, center_y), shape_data["shape"]):
+                            area_label = name
+                            break
+                    elif shape_data["type"] == "polygon":
+                        if is_point_in_polygon((center_x, center_y), shape_data["shape"]):
+                            area_label = name
+                            break
                 if area_label != "none":
                     break
         else:
