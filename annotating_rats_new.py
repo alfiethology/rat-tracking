@@ -3,9 +3,10 @@ import cv2
 import json
 import numpy as np
 from ultralytics import YOLO
+import shapely.geometry as geom
 
 # Paths
-MODEL_PATH = "/home/or22503/Louise_rat_tracking/runs/detect/train2/weights/best.pt"
+MODEL_PATH = "/home/or22503/Louise_rat_tracking/runs/detect/train4/weights/best.pt"
 INPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/dumbledore.avi"
 OUTPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/annotated_Dumbledore.mp4"
 AREAS_JSON_PATH = "/home/or22503/Louise_rat_tracking/areas.json"
@@ -21,22 +22,16 @@ model = YOLO(MODEL_PATH)
 with open(AREAS_JSON_PATH, 'r') as f:
     area_boxes = json.load(f)
 
-# Convert area boxes to simple min/max format
-def make_rect(area_coords):
-    (x1, y1), (x2, y2) = area_coords
-    return {
-        "xmin": min(x1, x2),
-        "xmax": max(x1, x2),
-        "ymin": min(y1, y2),
-        "ymax": max(y1, y2)
-    }
+# Convert polygon coordinates into shapely Polygon objects
+area_polygons = {
+    name: geom.Polygon(coords[0])  # coords[0] because your polygons are wrapped in an extra list
+    for name, coords in area_boxes.items()
+}
 
-area_rects = {name: make_rect(coords) for name, coords in area_boxes.items()}
+# Helper to check if a point is inside the polygon
+def is_point_in_polygon(point, polygon):
+    return polygon.contains(geom.Point(point))
 
-# Helper: Check if a point is inside a bounding rectangle
-def is_point_in_rect(point, rect):
-    x, y = point
-    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= y <= rect['ymax']
 
 # Open video
 cap = cv2.VideoCapture(INPUT_VIDEO_PATH)
@@ -83,8 +78,8 @@ while True:
             center_y = int((y1 + y2) / 2)
 
             location_label = "unknown"
-            for name, rect in area_rects.items():
-                if is_point_in_rect((center_x, center_y), rect):
+            for name, polygon in area_polygons.items():
+                if is_point_in_polygon((center_x, center_y), polygon):
                     location_label = name
                     break
 
