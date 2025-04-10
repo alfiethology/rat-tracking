@@ -7,8 +7,8 @@ import shapely.geometry as geom
 
 # Paths
 MODEL_PATH = "/home/or22503/Louise_rat_tracking/runs/detect/train4/weights/best.pt"
-INPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/dumbledore.avi"
-OUTPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/annotated_Dumbledore.mp4"
+INPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/raw_videos/EPM_day_1_240906_video_2.avi"
+OUTPUT_VIDEO_PATH = "/home/or22503/Louise_rat_tracking/videos/output.mp4"
 AREAS_JSON_PATH = "/home/or22503/Louise_rat_tracking/areas.json"
 RAT_NAME = "Dumbledore"
 

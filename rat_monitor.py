@@ -2,7 +2,7 @@ import os
 import cv2
 import csv
 import json
-from tqdm import tqdm  # Re-added tqdm
+from tqdm import tqdm
 from ultralytics import YOLO
 import time
 import datetime
@@ -16,27 +16,35 @@ start_time = time.time()
 # ====== Ensure output folder exists ======
 os.makedirs(CSV_OUTPUT_FOLDER, exist_ok=True)
 
-# Prepare single CSV output file
-combined_csv_path = os.path.join(CSV_OUTPUT_FOLDER, f"combined_rat_data_{date}.csv")
-combined_csv_file = open(combined_csv_path, mode='w', newline='')
-combined_csv_writer = csv.writer(combined_csv_file)
-combined_csv_writer.writerow(["EPM_session", "video_name", "rat_name", "timestamp", "frame_number", "area_occupied"])  # Added timestamp
-
 # ====== Load YOLO Model ======
 model = YOLO(MODEL_PATH)
 
 # ====== Load Area Boxes ======
-with open(AREAS_JSON_PATH, 'r') as f:
+def make_rect(coords):
+    (x1, y1), (x2, y2) = coords
+    return {"xmin": min(x1, x2), "xmax": max(x1, x2), "ymin": min(y1, y2), "ymax": max(y1, y2)}
+
+def is_point_in_rect(point, rect):
+    x, y = point
+    return rect['xmin'] <= x <= rect['xmax'] and rect['ymin'] <= y <= rect['ymax']
+
+def is_point_in_polygon(point, polygon_coords):
+    polygon = Polygon(polygon_coords)
+    return polygon.contains(Point(point))
+
+with open(AREAS_JSON_PATH, 'r') as f:  # Update to use areas_new.json
     area_boxes = json.load(f)
 
 area_shapes = {}
 for name, shape_list in area_boxes.items():
-    area_shapes[name] = [Polygon(shape_coords) for shape_coords in shape_list]  # Directly load polygons
-
-# Check if a point is inside any polygon
-def is_point_in_any_polygon(point, polygons):
-    point_obj = Point(point)
-    return any(polygon.contains(point_obj) for polygon in polygons)
+    area_shapes[name] = []
+    for shape_coords in shape_list:
+        if len(shape_coords) == 2:  # Rectangle (two points)
+            area_shapes[name].append({"type": "rectangle", "shape": make_rect(shape_coords)})
+        elif len(shape_coords) > 2:  # Polygon (multiple points)
+            area_shapes[name].append({"type": "polygon", "shape": Polygon(shape_coords)})
+        else:
+            raise ValueError(f"Invalid shape definition for area '{name}'")
 
 # ====== Load Rat Schedules ======
 def hms_to_seconds(hms_str):
@@ -48,13 +56,12 @@ with open(SCHEDULE_JSON_PATH, 'r') as f:
 
 schedule_dict = {}
 for entry in full_schedule:
-    session = entry['EPM_session']
     video = entry['video_name']
     sched = entry['schedule']
     for s in sched:
         s['start_seconds'] = hms_to_seconds(s['start_time'])
-        s['end_seconds'] = s.get('end_time') and hms_to_seconds(s['end_time']) or (s['start_seconds'] + 300)  # Default to 5 minutes
-    schedule_dict[video] = {"session": session, "schedule": sched}
+        s['end_seconds'] = s['start_seconds'] + 300  # 5 minutes
+    schedule_dict[video] = sched
 
 def get_current_rat_name(schedule, seconds_elapsed):
     for entry in schedule:
@@ -83,15 +90,22 @@ for video_file in video_files:
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"Found {frame_count} frames at {fps:.2f} FPS")
 
-    # Process frames with progress bar
-    for frame_idx in tqdm(range(1, frame_count + 1, FRAME_SKIP), desc="🔍 Detecting", unit="frame"):  # Re-added tqdm
+    # Prepare CSV output file
+    video_basename = os.path.splitext(video_file)[0]
+    csv_output_path = os.path.join(CSV_OUTPUT_FOLDER, f"{video_basename}_{date}.csv")
+    csv_file = open(csv_output_path, mode='w', newline='')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(["frame", "timestamp", "rat_name", "area"])
+
+    # Progress bar
+    for frame_idx in tqdm(range(1, frame_count + 1, FRAME_SKIP), desc="🔍 Detecting", unit="frame"):
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         if not ret:
             break
 
         current_time_sec = frame_idx / fps
-        rat_name = get_current_rat_name(schedule_dict[video_file]["schedule"], current_time_sec)
+        rat_name = get_current_rat_name(rat_schedule, current_time_sec)
         if rat_name is None:
             continue  # Skip frame
 
@@ -99,7 +113,7 @@ for video_file in video_files:
         hrs = int(current_time_sec // 3600)
         mins = int((current_time_sec % 3600) // 60)
         secs = int(current_time_sec % 60)
-        timestamp = f"{hrs:02}:{mins:02}:{secs:02}"  # Generate timestamp
+        timestamp = f"{hrs:02}:{mins:02}:{secs:02}"
 
         results = model(frame, verbose=False, imgsz=640)
 
@@ -124,22 +138,29 @@ for video_file in video_files:
             center_x = int((x1 + x2) / 2)
             center_y = int((y1 + y2) / 2)
 
-            for name, polygons in area_shapes.items():
-                if is_point_in_any_polygon((center_x, center_y), polygons):
-                    area_label = name
+            for name, shapes in area_shapes.items():
+                for shape_data in shapes:
+                    if shape_data["type"] == "rectangle":
+                        if is_point_in_rect((center_x, center_y), shape_data["shape"]):
+                            area_label = name
+                            break
+                    elif shape_data["type"] == "polygon":
+                        if is_point_in_polygon((center_x, center_y), shape_data["shape"]):
+                            area_label = name
+                            break
+                if area_label != "none":
                     break
         else:
             continue  # No good detection
 
-        # Write to combined CSV
-        epm_session = schedule_dict[video_file]["session"]
-        combined_csv_writer.writerow([epm_session, video_file, rat_name, timestamp, frame_idx, area_label])  # Ensure all areas, including 'middle', are written
+        # Write to CSV
+        csv_writer.writerow([frame_idx, timestamp, rat_name, area_label])
 
     cap.release()
-    print(f"Finished processing {video_file}")
+    csv_file.close()
+    print(f"CSV saved to: {csv_output_path}")
 
-combined_csv_file.close()
-print(f"Combined CSV saved to: {combined_csv_path}")
+print("All videos processed.")
 
 end_time = time.time()
 elapsed = end_time - start_time
