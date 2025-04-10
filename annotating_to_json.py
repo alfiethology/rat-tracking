@@ -9,7 +9,7 @@ from glob import glob
 # Configuration
 IMAGE_FOLDER = "/home/or22503/Louise_rat_tracking/auto_labelled_frames"
 MODEL_PATH = "/home/or22503/Louise_rat_tracking/runs/detect/train4/weights/best.pt"
-MIN_CONFIDENCE = 0.8
+MIN_CONFIDENCE = 0.83
 
 # Load YOLO model
 if not os.path.exists(MODEL_PATH):
@@ -35,10 +35,13 @@ for image_path in image_paths:
         print(f"Skipping {image_path}, could not read image.")
         continue
 
+    # Convert BGR to RGB to match YOLO model expectations
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
     height, width, _ = image.shape  # Get original image dimensions
 
-    # Run YOLO inference with dynamic size
-    results = model(image, verbose=False, imgsz=max(width, height))
+    # Run YOLO inference with consistent image size
+    results = model(image, verbose=False, imgsz=640)  # Use the same imgsz as in annotating_to_video.py
 
     # Reinitialize JSON data for each image
     json_data = {
